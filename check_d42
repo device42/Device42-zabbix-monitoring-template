@@ -1,0 +1,91 @@
+#!/usr/bin/python
+
+import urllib
+import os
+import sys
+import ssl
+import logging, logging.handlers
+import json
+
+# This is borrowed from somewhere to differ what we send to stdout and errors output
+def setLogLevel(loglevel):
+    """
+    Setup logging.
+    """
+
+    numeric_loglevel = getattr(logging, loglevel.upper(), None)
+    if not isinstance(numeric_loglevel, int):
+        raise ValueError('Invalid log level: "%s"\n Try: "debug", "info", "warning", "critical".' % loglevel)
+
+    program = os.path.basename( __file__ )
+    logger = logging.getLogger( program )
+    logger.setLevel(numeric_loglevel)
+
+    log_handler = logging.handlers.SysLogHandler( address = '/dev/log' )
+    #log_handler = logging.StreamHandler(sys.stdout)
+    logger.addHandler( log_handler )
+
+    return logger
+
+def fetchHealthStatus(url, user = None, passwd = None):
+    """ Return the data from health status URL """
+    healthstats = "/healthstats/"
+    if user and passwd:
+        parts = url.split('://')
+        url = parts[0] + "://" + user + ":" + passwd + "@" + parts[1] + healthstats
+
+    try:
+	context = ssl._create_unverified_context()
+        conn = urllib.urlopen(url,context=context)
+        data = conn.read()
+    except:
+        raise
+
+    conn.close()
+    return json.loads(data)
+
+def parse(data, param):
+    """ Parse JSON from API to get the param
+    """
+    main_params = ('version','cpu_used_percent','dbsize','disk_used_percent')
+    memory_params = ('memtotal','cached','swapfree','swaptotal','memfree','buffers')
+    if param in main_params:
+       value =  data[param]
+    
+    if param in memory_params:
+       value = data["memory_in_MB"][param]
+
+    return value
+
+def zbx_fail(err):
+    logger.critical("%s", err)
+    print "ZBX_NOTSUPPORTED"
+    sys.exit(1)
+
+def main():    
+
+# Parameters: HOSTIP, D42URL, D42USER, D42PASSWD, KEY. This is what we expect from zabbix.
+
+   host=sys.argv[1]
+   d42url=sys.argv[2]
+   d42user=sys.argv[3]
+   d42pwd=sys.argv[4]
+   d42key=sys.argv[5]
+
+   try:
+        health_status = fetchHealthStatus(d42url, user = d42user, passwd = d42pwd)
+   except Exception as e:
+        zbx_fail('failed to fetch D42 data: %s' % e)
+    
+   try:
+        value = parse( data = health_status, param = d42key )
+   except Exception as e:
+        zbx_fail('failed to parse json: %s' % e)
+
+   print value
+
+if __name__ == "__main__":
+    loglevel = 'info'
+    logger   = setLogLevel(loglevel)
+    main()
+
